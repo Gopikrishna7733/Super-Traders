@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Traders: Quiz Master</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="gate" id="gate">
+  <div class="panel">
+    <h2>Quiz master sign-in</h2>
+    <div class="field"><label for="email">Admin email</label><input id="email" type="email" autocomplete="username"></div>
+    <div class="field"><label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password"></div>
+    <button class="btn gold big" id="login" type="button">Sign in</button>
+    <p class="msg" id="gateMsg" style="margin-top:.6rem"></p>
+  </div>
+</div>
+
+<header class="top">
+  <div class="logo-chip"><img src="logo.png" alt="PMM 3.0"></div>
+  <div class="brand"><h1>Super Traders</h1><p>Quiz master control room. Keep this page open during the round.</p></div>
+  <div class="spacer"></div>
+  <button class="btn ghost sm" id="logout" type="button" hidden>Sign out</button>
+  <span id="status" class="pill"></span>
+</header>
+<div id="statusline" class="statusline"></div>
+
+<main class="admin">
+  <div class="col">
+    <!-- market control -->
+    <section class="panel">
+      <h2>Market</h2>
+      <div class="row" style="justify-content:space-between;margin-bottom:.8rem">
+        <div><span class="muted small">Price</span><div class="team-price" id="price">0</div></div>
+        <div style="text-align:right"><span class="muted small">Owner</span><div id="owner" style="font-weight:700;font-size:1.3rem">None</div><div class="muted small" id="clocktext"></div></div>
+      </div>
+      <div class="bar" id="bar" style="margin-bottom:1rem"><i id="barfill"></i></div>
+
+      <div id="key" class="banner owner small" style="margin-bottom:1rem" hidden></div>
+
+      <div id="openForm" hidden>
+        <div class="typebtns" role="radiogroup" aria-label="Question type">
+          <label><input type="radio" name="qtype" value="mcq" checked><span>Multiple choice</span></label>
+          <label><input type="radio" name="qtype" value="blank"><span>Fill in the blank</span></label>
+          <label><input type="radio" name="qtype" value="statement"><span>Statement guess</span></label>
+        </div>
+        <div class="field"><label for="q" id="qlabel">Question</label><textarea id="q"></textarea></div>
+        <div id="mcqBox">
+          <div class="grid2">
+            <div class="field"><label for="oA">Option A</label><input id="oA"></div>
+            <div class="field"><label for="oB">Option B</label><input id="oB"></div>
+            <div class="field"><label for="oC">Option C</label><input id="oC"></div>
+            <div class="field"><label for="oD">Option D</label><input id="oD"></div>
+          </div>
+          <div class="field" style="max-width:11rem"><label for="mcqAns">Correct option</label>
+            <select id="mcqAns"><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></div>
+        </div>
+        <div class="field" id="textAnsBox" hidden><label for="textAns" id="textAnsLabel">Correct answer</label><input id="textAns"></div>
+        <div class="row">
+          <div style="flex:0 0 11rem"><label for="p0">Opening price</label><input id="p0" type="number" min="1" step="1"></div>
+          <button class="btn gold big" id="open" type="button" style="align-self:flex-end;flex:1">Open the market</button>
+        </div>
+      </div>
+
+      <div class="row" id="live" hidden>
+        <button class="btn bull" id="closeNow" type="button">Close bidding now</button>
+        <button class="btn bull" id="right" type="button"></button>
+        <button class="btn bear" id="wrong" type="button"></button>
+        <button class="btn ghost" id="skip" type="button">Skip question</button>
+      </div>
+      <p class="msg" id="msg" role="status" aria-live="polite" style="margin-top:.6rem"></p>
+    </section>
+
+    <!-- teams -->
+    <section class="panel">
+      <h2>Teams and trading capital</h2>
+      <table>
+        <thead><tr><th>Team</th><th style="width:7rem">Points</th><th style="width:1%"></th></tr></thead>
+        <tbody id="teamRows"></tbody>
+      </table>
+      <p class="muted small" id="noTeams">No teams yet. Add them below.</p>
+      <div class="field" style="margin-top:1rem"><label for="names">Add teams (one name per line)</label><textarea id="names" placeholder="Team Alpha&#10;Team Beta"></textarea></div>
+      <div class="row">
+        <div style="flex:0 0 11rem"><label for="start">Starting points</label><input id="start" type="number" min="0" step="1" value="500"></div>
+        <button class="btn" id="addTeams" type="button" style="align-self:flex-end">Add teams</button>
+        <button class="btn ghost" id="reset" type="button" style="align-self:flex-end">Reset game</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="panel">
+      <h2>Market settings</h2>
+      <div class="grid2">
+        <div class="field"><label for="s_init">Default opening price</label><input id="s_init" type="number" min="1"></div>
+        <div class="field"><label for="s_step">Minimum raise per bid</label><input id="s_step" type="number" min="1"></div>
+        <div class="field"><label for="s_decay">Price drop each step</label><input id="s_decay" type="number" min="1"></div>
+        <div class="field"><label for="s_every">Seconds between drops</label><input id="s_every" type="number" min="1"></div>
+        <div class="field"><label for="s_floor">Lowest price (floor)</label><input id="s_floor" type="number" min="1"></div>
+        <div class="field"><label for="s_close">Seconds to close after last bid</label><input id="s_close" type="number" min="1"></div>
+        <div class="field"><label for="s_ans">Answer time (seconds)</label><input id="s_ans" type="number" min="5"></div>
+      </div>
+      <button class="btn" id="saveSettings" type="button">Save settings</button>
+    </section>
+
+    <section class="panel">
+      <h2>Activity</h2>
+      <ul class="log" id="log"></ul>
+    </section>
+  </div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const A = Store.actions;
+
+async function authorizeAdmin(user) {
+  try {
+    await firebase.functions().httpsCallable('claimAdmin')();
+    await user.getIdToken(true);
+    await Store.enableAdmin();
+    $('gate').hidden = true;
+    $('logout').hidden = false;
+    $('gateMsg').textContent = '';
+  } catch (err) {
+    Store.disableAdmin();
+    $('gate').hidden = false;
+    $('logout').hidden = true;
+    $('gateMsg').textContent = err.code === 'functions/permission-denied'
+      ? 'This account is not authorized as an admin.'
+      : 'Secure sign-in is unavailable: ' + err.message;
+    try {
+      await firebase.auth().signOut();
+    } catch (signOutError) {
+      $('gateMsg').textContent += ' Sign-out failed: ' + signOutError.message;
+    }
+  }
+}
+if (Store.mode === 'local') {
+  $('gateMsg').textContent = 'Secure admin access requires Firebase configuration.';
+  $('login').disabled = true;
+} else {
+  firebase.auth().onAuthStateChanged(user => {
+    if (user) authorizeAdmin(user);
+    else {
+      Store.disableAdmin();
+      $('gate').hidden = false;
+      $('logout').hidden = true;
+    }
+  });
+}
+$('login').onclick = () => {
+  $('gateMsg').textContent = '';
+  firebase.auth().signInWithEmailAndPassword($('email').value.trim(), $('pass').value)
+    .catch(err => { $('gateMsg').textContent = 'Sign-in failed: ' + err.message; });
+};
+$('pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('login').click(); });
+$('logout').onclick = () => firebase.auth().signOut();
+
+Store.onStatus((kind, msg) => { const el = $('statusline'); el.textContent = msg; el.className = 'statusline' + (kind === 'error' ? ' error' : ''); });
+function say(t, ok) { const m = $('msg'); m.textContent = t || ''; m.className = 'msg' + (ok ? ' ok' : ''); }
+async function run(p) { const r = await p; if (r && r.error && r.error !== 'stale') say(r.error); else say(''); return r; }
+
+// ---- actions ----
+const qType = () => document.querySelector('input[name="qtype"]:checked').value;
+function syncType() {
+  const t = qType();
+  $('mcqBox').hidden = t !== 'mcq'; $('textAnsBox').hidden = t === 'mcq';
+  $('qlabel').textContent = t === 'mcq' ? 'Question' : t === 'blank' ? 'Sentence with a blank (use ___ for the gap)' : 'Statement or clues to guess from';
+  $('textAnsLabel').textContent = t === 'blank' ? 'Word that fills the blank' : 'What teams should guess';
+  $('q').placeholder = t === 'blank' ? 'Aspirin irreversibly inhibits ___ enzyme.' : t === 'statement' ? 'I am a beta-blocker used in hypertension, my name starts with P...' : 'Which enzyme is inhibited by aspirin?';
+}
+document.querySelectorAll('input[name="qtype"]').forEach(r => r.addEventListener('change', syncType));
+syncType();
+$('open').onclick = () => {
+  const t = qType();
+  const q = { qType: t, question: $('q').value.trim(), options: ['oA', 'oB', 'oC', 'oD'].map(id => $(id).value), answer: t === 'mcq' ? $('mcqAns').value : $('textAns').value };
+  run(A.openMarket(q, $('p0').value)).then(r => { if (r && r.ok) { ['q', 'oA', 'oB', 'oC', 'oD', 'textAns'].forEach(id => { $(id).value = ''; }); } });
+};
+$('closeNow').onclick = () => run(A.closeBidding(null));
+$('right').onclick = () => run(A.markResult(true));
+$('wrong').onclick = () => run(A.markResult(false));
+$('skip').onclick = () => { if (confirm('Skip this question? No points will change.')) run(A.skip()); };
+$('addTeams').onclick = async () => {
+  const names = $('names').value.split('\n').map(x => x.trim()).filter(Boolean);
+  if (!names.length) return say('Type at least one team name.');
+  await run(A.addTeams(names, Math.round(Number($('start').value) || 0))); $('names').value = '';
+};
+$('reset').onclick = () => { if (confirm('Reset the game? All teams go back to the starting points and the log is cleared.')) run(A.resetGame(Math.round(Number($('start').value) || 0))); };
+$('saveSettings').onclick = () => run(A.saveSettings({
+  initialPrice: +$('s_init').value, step: +$('s_step').value, decayAmt: +$('s_decay').value, decayEvery: +$('s_every').value,
+  floor: +$('s_floor').value, closeIn: +$('s_close').value, answerTime: +$('s_ans').value
+})).then(r => { if (r && r.ok) say('Settings saved.', true); });
+$('teamRows').addEventListener('click', e => {
+  const id = e.target.dataset.id; if (!id) return;
+  if (e.target.dataset.act === 'set') run(A.setPoints(id, Number(document.querySelector(`input[data-pts="${id}"]`).value) || 0));
+  if (e.target.dataset.act === 'del' && confirm('Remove this team?')) run(A.removeTeam(id));
+});
+
+// ---- render ----
+let teamsKey = '', settingsLoaded = false;
+function render(s) {
+  const m = s.market, st = s.settings, info = UI.phaseInfo(s);
+  const pill = $('status'); pill.className = 'pill ' + info.cls; pill.innerHTML = '<span class="dot"></span>' + UI.esc(info.label);
+  $('price').textContent = m.phase === 'idle' ? '0' : UI.fmt(m.price);
+  const owner = s.teams.find(t => t.id === m.ownerId);
+  $('owner').textContent = owner ? owner.name : 'None';
+
+  const keyBox = $('key'), ans = UI.answerText(m);
+  keyBox.hidden = m.phase === 'idle' || m.phase === 'result' || !ans;
+  keyBox.textContent = 'Answer key (' + UI.typeLabel(m.qType) + '): ' + ans;
+  const canOpen = m.phase === 'idle' || m.phase === 'result';
+  $('openForm').hidden = !canOpen;
+  if (canOpen && document.activeElement !== $('p0') && !$('p0').dataset.touched) $('p0').value = st.initialPrice;
+  $('live').hidden = canOpen;
+  $('closeNow').hidden = m.phase !== 'bidding';
+  $('right').hidden = $('wrong').hidden = m.phase !== 'answering';
+  $('right').textContent = 'Correct: +' + UI.fmt(2 * m.price);
+  $('wrong').textContent = 'Wrong: −' + UI.fmt(m.price);
+
+  const key = JSON.stringify(s.teams);
+  if (key !== teamsKey) {
+    teamsKey = key;
+    $('noTeams').hidden = s.teams.length > 0;
+    $('teamRows').innerHTML = s.teams.map(t => `<tr><td>${UI.esc(t.name)}</td><td><input type="number" step="1" value="${t.points}" data-pts="${UI.esc(t.id)}" aria-label="Points for ${UI.esc(t.name)}"></td><td style="white-space:nowrap"><button class="btn sm" data-act="set" data-id="${UI.esc(t.id)}" type="button">Set</button> <button class="btn ghost sm" data-act="del" data-id="${UI.esc(t.id)}" type="button">Remove</button></td></tr>`).join('');
+  }
+  if (!settingsLoaded) {
+    settingsLoaded = true;
+    $('s_init').value = st.initialPrice; $('s_step').value = st.step; $('s_decay').value = st.decayAmt; $('s_every').value = st.decayEvery;
+    $('s_floor').value = st.floor; $('s_close').value = st.closeIn; $('s_ans').value = st.answerTime;
+  }
+  $('log').innerHTML = s.log.map(l => `<li><time>${new Date(l.t).toLocaleTimeString()}</time>${UI.esc(l.m)}</li>`).join('') || '<li class="muted">Nothing has happened yet.</li>';
+}
+$('p0').addEventListener('input', () => { $('p0').dataset.touched = '1'; });
+$('open').addEventListener('click', () => { delete $('p0').dataset.touched; });
+
+// ---- engine: this page drives the price drops and the market closing ----
+let busy = false;
+function tick() {
+  const s = Store.state(); if (!s) return;
+  const t = Store.secondsLeft(), m = s.market;
+  // display
+  if (!t) { $('barfill').style.width = '0%'; $('clocktext').textContent = ''; }
+  else {
+    const secs = Math.ceil(t.left);
+    let frac = t.left / t.total, txt;
+    if (m.phase === 'open') { if (m.price <= s.settings.floor) { txt = 'At the floor, waiting for a buyer'; frac = 0; } else txt = 'Next drop in ' + secs + 's'; }
+    else if (m.phase === 'bidding') txt = 'Closes in ' + secs + 's';
+    else txt = t.left > 0 ? 'Answer time left: ' + secs + 's' : "Time's up, mark the answer";
+    $('clocktext').textContent = txt; $('barfill').style.width = (frac * 100) + '%';
+    $('bar').classList.toggle('warn', m.phase === 'answering' && t.left <= 5);
+  }
+  // rules
+  if (!t || t.left > 0 || busy) return;
+  if (m.phase === 'open' && m.price > s.settings.floor) { busy = true; A.decay(m.rev).finally(() => { busy = false; }); }
+  else if (m.phase === 'bidding') { busy = true; A.closeBidding(m.rev).finally(() => { busy = false; }); }
+}
+
+Store.subscribe(render);
+setInterval(tick, 250);
+</script>
+</body>
+</html>

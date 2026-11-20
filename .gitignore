@@ -1,0 +1,10 @@
+node_modules/
+functions/node_modules/
+.firebase/
+.firebaserc.local
+.env
+.env.*
+!.env.example
+service-account*.json
+firebase-debug.log
+firestore-debug.log

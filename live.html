@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Traders: Live Market</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="logo-chip"><img src="logo.png" alt="PMM 3.0"></div>
+  <div class="brand">
+    <h1>Super Traders</h1>
+    <p>The Knowledge Stock Market</p>
+  </div>
+  <div class="spacer"></div>
+  <span id="status" class="pill"></span>
+  <button class="btn ghost sm" id="fs" type="button">Full screen</button>
+</header>
+<div id="statusline" class="statusline"></div>
+
+<main class="stage">
+  <section class="board">
+    <div class="qhead"><span id="qno"></span><span id="mode"></span></div>
+    <h2 id="question" class="question"></h2>
+    <ol class="opts" id="opts"></ol>
+
+    <div class="ticker">
+      <div class="row" style="align-items:flex-end;gap:1.2rem">
+        <div class="price idle num" id="price">0</div>
+        <div style="flex:0 0 auto;padding-bottom:1rem">
+          <div class="unit">points</div>
+          <div class="trend" id="trend"></div>
+        </div>
+      </div>
+      <div id="clockwrap" hidden>
+        <div class="clock-label" id="clocklabel"></div>
+        <div class="bar" id="bar"><i id="barfill"></i></div>
+      </div>
+    </div>
+
+    <div class="chart" id="chart"></div>
+    <div id="banner" class="banner" hidden></div>
+  </section>
+
+  <aside class="panel">
+    <h2>Portfolio standings</h2>
+    <ol class="ranks" id="ranks"></ol>
+  </aside>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let prevPrice = null, prevRev = null;
+
+Store.onStatus((kind, msg) => { const el = $('statusline'); el.textContent = msg; el.className = 'statusline' + (kind === 'error' ? ' error' : ''); });
+$('fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+
+function render(s) {
+  const m = s.market, info = UI.phaseInfo(s);
+  const st = $('status'); st.className = 'pill ' + info.cls; st.innerHTML = '<span class="dot"></span>' + UI.esc(info.label);
+  $('qno').textContent = m.qNo ? 'Question ' + m.qNo : 'Market not open yet';
+  $('mode').innerHTML = m.phase !== 'idle' && m.qNo ? '<span class="chip">' + UI.esc(UI.typeLabel(m.qType)) + '</span>' : '';
+  $('opts').innerHTML = UI.optionsHTML(m);
+  $('question').textContent = m.phase === 'idle' ? 'The next question is about to hit the market.' : (m.question || 'The quiz master is reading the question.');
+
+  // price + trend
+  const p = $('price');
+  if (m.phase === 'idle') { p.textContent = '0'; p.className = 'price idle num'; }
+  else {
+    p.textContent = UI.fmt(m.price); p.className = 'price num';
+    if (prevPrice !== null && m.price !== prevPrice && m.rev !== prevRev) { void p.offsetWidth; p.classList.add(m.price > prevPrice ? 'flash-up' : 'flash-down'); }
+  }
+  prevPrice = m.phase === 'idle' ? null : m.price; prevRev = m.rev;
+  const h = m.history, tr = $('trend');
+  if (m.phase !== 'idle' && h.length > 1) {
+    const d = h[h.length - 1] - h[h.length - 2];
+    tr.className = 'trend ' + (d > 0 ? 'up' : 'down'); tr.textContent = (d > 0 ? '▲ +' : '▼ −') + Math.abs(d);
+  } else { tr.className = 'trend'; tr.textContent = ''; }
+
+  $('chart').innerHTML = UI.chartSVG(m.phase === 'idle' ? [] : h);
+
+  // owner / result banner
+  const b = $('banner'), owner = s.teams.find(t => t.id === m.ownerId);
+  b.className = 'banner'; b.hidden = false;
+  if (m.phase === 'bidding') { b.classList.add('owner'); b.textContent = 'Highest bidder: ' + owner.name + ' at ' + UI.fmt(m.price); }
+  else if (m.phase === 'answering') { b.classList.add('owner'); b.textContent = owner.name + ' owns this question at ' + UI.fmt(m.price) + ' and must answer now'; }
+  else if (m.phase === 'result' && m.result) {
+    const ans = m.result.answer ? ' Correct answer: ' + m.result.answer + '.' : '';
+    if (m.result.skipped) b.textContent = 'Question skipped. No points changed.' + ans;
+    else if (m.result.correct) { b.classList.add('win'); b.textContent = m.result.teamName + ' answered correctly: profit of ' + UI.fmt(m.result.delta) + ' points (2× ' + UI.fmt(m.result.price) + ').' + ans; }
+    else { b.classList.add('lose'); b.textContent = m.result.teamName + ' answered incorrectly: loss of ' + UI.fmt(-m.result.delta) + ' points.' + ans; }
+  } else if (m.phase === 'open') b.textContent = 'No owner yet. Buy now before the price falls further, or wait for it to drop.';
+  else b.hidden = true;
+
+  // standings
+  const rk = UI.rank(s), top = Math.max(1, ...rk.map(t => t.points));
+  $('ranks').innerHTML = rk.length ? rk.map((t, i) =>
+    `<li class="${t.id === m.ownerId && (m.phase === 'bidding' || m.phase === 'answering') ? 'owner' : ''}"><span class="fill" style="width:${Math.max(0, t.points) / top * 100}%"></span><span class="pos">${i + 1}</span><span>${UI.esc(t.name)}</span><span class="pts">${UI.fmt(t.points)}</span></li>`).join('')
+    : '<li class="muted">Teams appear here once the quiz master adds them.</li>';
+}
+
+function tick() {
+  const s = Store.state(); if (!s) return;
+  const t = Store.secondsLeft(), m = s.market, w = $('clockwrap');
+  if (!t) { w.hidden = true; return; }
+  w.hidden = false;
+  const secs = Math.ceil(t.left); let label, frac = t.left / t.total;
+  if (m.phase === 'open') {
+    if (m.price <= s.settings.floor) { label = 'Price is at the floor. Waiting for a buyer.'; frac = 0; }
+    else label = 'Next price drop in ' + secs + 's';
+  } else if (m.phase === 'bidding') label = 'Market closes in ' + secs + 's unless someone outbids';
+  else label = t.left > 0 ? 'Time to answer: ' + secs + 's' : "Time's up";
+  $('clocklabel').textContent = label;
+  $('barfill').style.width = (frac * 100) + '%';
+  $('bar').classList.toggle('warn', m.phase !== 'open' && t.left <= 5);
+}
+
+Store.subscribe(render);
+setInterval(tick, 150);
+</script>
+</body>
+</html>
