@@ -6,3 +6,4 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "873938453946",
   appId: "1:873938453946:web:fc806ba21f47a82893c983"
 };
+window.ADMIN_PASSCODE = "MrKrsna";

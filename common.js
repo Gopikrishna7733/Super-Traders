@@ -1,6 +1,6 @@
 /* Super Traders: shared engine. Used by index.html, admin.html and live.html.
    One state document holds teams, settings and the current market.
-   Backend: Cloud Functions and Firestore when FIREBASE_CONFIG is set, otherwise localStorage. */
+   Backend: Firestore (superTraders/game) when FIREBASE_CONFIG is set, otherwise localStorage. */
 (function () {
   'use strict';
 
@@ -33,8 +33,7 @@
   const statusFns = [];
   let lastStatus = null;
   let state = null, lastRev = null, revAt = Date.now();
-  let backend = null, mode = 'local', publicRef = null, privateRef = null;
-  let adminEnabled = false, privateAnswer = '', privateAnswerQNo = 0, privateUnsubscribe = null;
+  let backend = null, mode = 'local';
 
   function setStatus(kind, msg) { lastStatus = { kind, msg }; statusFns.forEach(f => f(kind, msg)); }
   function emit(s) {
@@ -44,47 +43,31 @@
   }
   function addLog(s, m) { s.log.unshift({ t: Date.now(), m }); if (s.log.length > 80) s.log.length = 80; }
 
-  // Public state plus (for a signed-in admin) the private answer key. Shared by the snapshot listeners.
-  function emitCurrent(raw) {
-    const current = normalise(raw);
-    current.market.answer = '';
-    if (adminEnabled && privateAnswerQNo === current.market.qNo) current.market.answer = privateAnswer;
-    emit(current);
-  }
-
   // ---------- backends ----------
   const cfg = window.FIREBASE_CONFIG;
   if (cfg && cfg.apiKey && window.firebase) {
     mode = 'firebase';
     firebase.initializeApp(cfg);
     const db = firebase.firestore();
-    publicRef = db.collection('superTraders').doc('game');
-    privateRef = db.collection('superTraders').doc('admin');
-    let initializationRequested = false;
-    const ensureBackendGame = () => {
-      if (initializationRequested) return;
-      initializationRequested = true;
-      firebase.functions().httpsCallable('gameAction')({ action: 'ensureGame' }).catch(err => { initializationRequested = false; setStatus('error', 'Could not initialize game: ' + err.message + (err.code ? ' (' + err.code + ')' : '') + '. Check the Cloud Function logs.'); });
-    };
-    publicRef.onSnapshot(snap => {
-      if (!snap.exists) {
-        emitCurrent(null);
-        ensureBackendGame();
-        return;
-      }
-      ensureBackendGame();
+    const ref = db.collection('superTraders').doc('game');
+    ref.onSnapshot(snap => {
+      if (!snap.exists) { ref.set(initialState()); return; }
       setStatus('live', 'Live: synced across devices');
-      emitCurrent(snap.data());
+      emit(normalise(snap.data()));
     }, err => setStatus('error', 'Firebase error: ' + err.message));
-    backend = async (action, payload) => {
-      const result = await firebase.functions().httpsCallable('gameAction')(Object.assign({ action }, payload || {}));
-      return result.data;
-    };
+    backend = fn => db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      const s = snap.exists ? normalise(snap.data()) : initialState();
+      const r = fn(s);
+      if (r && r.error) return r;
+      tx.set(ref, s);
+      return r || { ok: true };
+    });
   } else {
     if (cfg && cfg.apiKey) setStatus('error', 'Firebase scripts did not load. Check the internet connection.');
     else setStatus('local', 'Local mode: only this browser (add Firebase config to sync devices)');
     const read = () => { try { return normalise(JSON.parse(localStorage.getItem(LOCAL_KEY))); } catch (e) { return initialState(); } };
-    backend = (action, payload, fn) => new Promise(resolve => {
+    backend = fn => new Promise(resolve => {
       const s = read();
       const r = fn(s);
       if (r && r.error) return resolve(r);
@@ -96,24 +79,39 @@
     setTimeout(() => emit(read()), 0);
   }
 
-  const update = (action, payload, fn) => backend(action, payload, fn).catch(e => ({ error: e.message || 'Could not save' }));
+  const update = fn => backend(fn).catch(e => ({ error: e.message || 'Could not save' }));
 
   // ---------- game actions (all rules live here) ----------
   const actions = {
     addTeams(names, points) {
-      return update('addTeams', { names, points }, s => { names.forEach(n => s.teams.push({ id: uid(), name: n, points: points })); addLog(s, `Added ${names.length} team(s) with ${points} points`); });
+      return update(s => { names.forEach(n => s.teams.push({ id: uid(), name: n, points: points, claimedBy: null })); addLog(s, `Added ${names.length} team(s) with ${points} points`); });
+    },
+    claimTeam(id, deviceId) { // locks a team to one device
+      return update(s => {
+        const t = s.teams.find(x => x.id === id);
+        if (!t) return { error: 'Team not found. Ask the admin.' };
+        if (t.claimedBy && t.claimedBy !== deviceId) return { error: 'That team is already taken on another device. Ask the admin.' };
+        t.claimedBy = deviceId; addLog(s, t.name + ' joined and is now locked');
+      });
+    },
+    releaseTeam(id) { // admin unlocks a team so it can be picked again
+      return update(s => {
+        const t = s.teams.find(x => x.id === id);
+        if (!t) return { error: 'Team not found' };
+        t.claimedBy = null; addLog(s, t.name + ' unlocked by admin');
+      });
     },
     removeTeam(id) {
-      return update('removeTeam', { id }, s => { s.teams = s.teams.filter(t => t.id !== id); });
+      return update(s => { s.teams = s.teams.filter(t => t.id !== id); });
     },
     setPoints(id, pts) {
-      return update('setPoints', { id, pts }, s => { const t = s.teams.find(x => x.id === id); if (!t) return { error: 'Team not found' }; t.points = Math.round(pts); addLog(s, `${t.name}: points set to ${t.points}`); });
+      return update(s => { const t = s.teams.find(x => x.id === id); if (!t) return { error: 'Team not found' }; t.points = Math.round(pts); addLog(s, `${t.name}: points set to ${t.points}`); });
     },
     saveSettings(obj) {
-      return update('saveSettings', { settings: obj }, s => { Object.assign(s.settings, obj); addLog(s, 'Market settings saved'); });
+      return update(s => { Object.assign(s.settings, obj); addLog(s, 'Market settings saved'); });
     },
     openMarket(q, price) { // q = { question, qType: 'mcq' | 'blank' | 'statement', options: [4 strings], answer }
-      return update('openMarket', { question: q, price }, s => {
+      return update(s => {
         const m = s.market;
         if (m.phase !== 'idle' && m.phase !== 'result') return { error: 'Finish the current question first' };
         price = Math.round(Number(price));
@@ -133,7 +131,7 @@
       });
     },
     placeBid(teamId, amount) {
-      return update('placeBid', { teamId, amount }, s => {
+      return update(s => {
         const m = s.market, t = s.teams.find(x => x.id === teamId);
         if (!t) return { error: 'Team not found' };
         if (m.phase !== 'open' && m.phase !== 'bidding') return { error: 'The market is closed' };
@@ -152,7 +150,7 @@
       });
     },
     decay(expectedRev) { // bear market: no buyer, price drops
-      return update('decay', { expectedRev }, s => {
+      return update(s => {
         const m = s.market;
         if (m.phase !== 'open' || m.rev !== expectedRev) return { error: 'stale' };
         const next = Math.max(s.settings.floor, m.price - s.settings.decayAmt);
@@ -161,7 +159,7 @@
       });
     },
     closeBidding(expectedRev) { // market closure: buyer must now answer
-      return update('closeBidding', { expectedRev }, s => {
+      return update(s => {
         const m = s.market;
         if (m.phase !== 'bidding' || (expectedRev != null && m.rev !== expectedRev)) return { error: 'stale' };
         const t = s.teams.find(x => x.id === m.ownerId);
@@ -170,7 +168,7 @@
       });
     },
     markResult(correct) {
-      return update('markResult', { correct }, s => {
+      return update(s => {
         const m = s.market;
         if (m.phase !== 'answering') return { error: 'No team is answering right now' };
         const t = s.teams.find(x => x.id === m.ownerId);
@@ -183,7 +181,7 @@
       });
     },
     skip() {
-      return update('skip', {}, s => {
+      return update(s => {
         const m = s.market;
         if (m.phase === 'idle' || m.phase === 'result') return { error: 'Nothing to skip' };
         m.result = { skipped: true, answer: answerText(m) }; m.phase = 'result'; m.rev += 1;
@@ -191,7 +189,7 @@
       });
     },
     resetGame(points) {
-      return update('resetGame', { points }, s => {
+      return update(s => {
         const fresh = initialState();
         s.teams.forEach(t => { t.points = points; });
         s.market = fresh.market; s.log = []; addLog(s, 'Game reset, all teams back to ' + points);
@@ -260,33 +258,6 @@
     state: () => state,
     subscribe(fn) { listeners.push(fn); if (state) fn(state); },
     onStatus(fn) { statusFns.push(fn); if (lastStatus) fn(lastStatus.kind, lastStatus.msg); },
-    enableAdmin() {
-      if (mode !== 'firebase' || !firebase.auth) throw new Error('Firebase authentication is required');
-      const user = firebase.auth().currentUser;
-      if (!user) throw new Error('Sign in before opening the admin panel');
-      return user.getIdTokenResult().then(token => {
-        if (token.claims.admin !== true) throw new Error('This account is not authorized as an admin');
-        adminEnabled = true;
-        if (privateUnsubscribe) privateUnsubscribe();
-        privateUnsubscribe = privateRef.onSnapshot(snap => {
-          const privateState = snap.exists ? snap.data() : {};
-          privateAnswer = privateState.answer || '';
-          privateAnswerQNo = privateState.qNo || 0;
-          if (state) emitCurrent(state);
-        }, err => setStatus('error', 'Could not read private admin state: ' + err.message));
-      });
-    },
-    disableAdmin() {
-      adminEnabled = false;
-      privateAnswer = '';
-      privateAnswerQNo = 0;
-      if (privateUnsubscribe) privateUnsubscribe();
-      privateUnsubscribe = null;
-      if (state) {
-        state.market.answer = '';
-        emit(state);
-      }
-    },
     update, actions, secondsLeft
   };
   window.UI = { esc, fmt, phaseInfo, rank, chartSVG, typeLabel, answerText, optionsHTML };

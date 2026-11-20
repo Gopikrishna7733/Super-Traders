@@ -28,14 +28,16 @@
       <select id="teamSelect"></select>
     </div>
     <button class="btn gold big" id="enter" type="button">Enter the market</button>
-    <p class="muted small" id="noTeams" style="margin-top:.8rem" hidden>No teams yet. Ask the quiz master to add teams, then reload this page.</p>
+    <p class="muted small" style="margin-top:.8rem">Pick carefully. Your team gets locked to this device once you enter.</p>
+    <p class="msg" id="pickMsg" style="margin-top:.4rem"></p>
+    <p class="muted small" id="noTeams" hidden></p>
   </section>
 
   <!-- trading desk -->
   <section id="desk" hidden>
     <div class="panel" style="margin-bottom:1rem">
       <div class="capital"><span id="teamName" style="font-weight:600"></span><span class="muted small">Trading capital</span></div>
-      <div class="capital"><button class="btn ghost sm" id="switch" type="button">Switch team</button><b id="capital">0</b></div>
+      <div class="capital"><span class="muted small" style="max-width:15rem">Locked to this device. To change teams, ask the admin.</span><b id="capital">0</b></div>
     </div>
 
     <div class="panel" style="display:grid;gap:1rem">
@@ -77,13 +79,14 @@
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const KEY = 'superTraders:team';
 let myId = localStorage.getItem(KEY);
+let deviceId = localStorage.getItem('superTraders:device');
+if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('superTraders:device', deviceId); }
 let pickerFilled = '';
 let prevPrice = null;
 
@@ -98,23 +101,33 @@ async function bid(amount) {
   else say('Bid placed at ' + UI.fmt(r.price), true);
 }
 
-$('enter').onclick = () => { const v = $('teamSelect').value; if (!v) return; myId = v; localStorage.setItem(KEY, v); render(Store.state()); };
-$('switch').onclick = () => { myId = null; localStorage.removeItem(KEY); render(Store.state()); };
+$('enter').onclick = async () => {
+  const v = $('teamSelect').value; if (!v) return;
+  const name = $('teamSelect').selectedOptions[0].textContent;
+  if (!confirm('Join as "' + name + '"? This locks the team to this device, and only the admin can change it.')) return;
+  $('pickMsg').textContent = '';
+  const r = await Store.actions.claimTeam(v, deviceId);
+  if (r.error) { $('pickMsg').textContent = r.error; return; }
+  myId = v; localStorage.setItem(KEY, v); render(Store.state());
+};
 $('buy').onclick = () => bid();
 $('quickBid').onclick = () => { const s = Store.state(); bid(s.market.price + s.settings.step); };
 $('customBtn').onclick = () => { const v = $('custom').value; if (!v) return say('Type the amount you want to bid.'); bid(v); $('custom').value = ''; };
 $('custom').addEventListener('keydown', e => { if (e.key === 'Enter') $('customBtn').click(); });
 
 function render(s) {
-  const me = s.teams.find(t => t.id === myId);
-  if (!me) { // show picker
+  const me = s.teams.find(t => t.id === myId && t.claimedBy === deviceId);
+  if (!me) { // show picker (also when the admin unlocked or removed this team)
+    if (myId) { myId = null; localStorage.removeItem(KEY); }
     $('desk').hidden = true; $('picker').hidden = false;
-    const key = s.teams.map(t => t.id + t.name).join('|');
+    const free = s.teams.filter(t => !t.claimedBy);
+    const key = free.map(t => t.id + t.name).join('|');
     if (key !== pickerFilled) {
       pickerFilled = key;
-      $('teamSelect').innerHTML = s.teams.map(t => `<option value="${UI.esc(t.id)}">${UI.esc(t.name)}</option>`).join('');
+      $('teamSelect').innerHTML = free.map(t => `<option value="${UI.esc(t.id)}">${UI.esc(t.name)}</option>`).join('');
     }
-    $('noTeams').hidden = s.teams.length > 0; $('enter').disabled = !s.teams.length;
+    $('noTeams').hidden = free.length > 0; $('enter').disabled = !free.length;
+    $('noTeams').textContent = s.teams.length ? 'All teams are taken. If yours is locked on another device, ask the admin.' : 'No teams yet. Ask the quiz master to add teams, then reload this page.';
     return;
   }
   $('picker').hidden = true; $('desk').hidden = false;
@@ -148,14 +161,14 @@ function render(s) {
     $('bidBox').hidden = false;
     const next = m.price + st.step, can = me.points >= next;
     if (iLead) { b.classList.add('owner'); b.textContent = 'You hold the highest bid at ' + UI.fmt(m.price) + '. Hold on until the market closes.'; }
-    else b.textContent = (owner ? owner.name : 'Another team') + ' leads at ' + UI.fmt(m.price) + '. Outbid them or let it go.';
+    else b.textContent = owner.name + ' leads at ' + UI.fmt(m.price) + '. Outbid them or let it go.';
     $('quickBid').textContent = 'Bid ' + UI.fmt(next);
     $('quickBid').disabled = iLead || !can; $('customBtn').disabled = iLead || !can; $('custom').disabled = iLead || !can;
     $('custom').min = next; $('custom').max = me.points;
     if (!iLead && !can) say('You cannot afford a higher bid (capital ' + UI.fmt(me.points) + ').');
   } else if (m.phase === 'answering') {
     if (iLead) { b.classList.add('owner'); b.textContent = 'Bought at ' + UI.fmt(m.price) + '. Answer now! Correct earns ' + UI.fmt(2 * m.price) + ', wrong loses ' + UI.fmt(m.price) + '.'; }
-    else b.textContent = 'Sold to ' + (owner ? owner.name : 'another team') + ' at ' + UI.fmt(m.price) + '. Bidding is closed.';
+    else b.textContent = 'Sold to ' + owner.name + ' at ' + UI.fmt(m.price) + '. Bidding is closed.';
   } else if (m.phase === 'result' && m.result) {
     const ans = m.result.answer ? ' Correct answer: ' + m.result.answer + '.' : '';
     if (m.result.skipped) b.textContent = 'Question skipped. No points changed.' + ans;
@@ -169,7 +182,7 @@ function render(s) {
 }
 
 function tick() {
-  const s = Store.state(); if (!s || !s.teams.find(t => t.id === myId)) return;
+  const s = Store.state(); if (!s || !myId || !s.teams.find(t => t.id === myId)) return;
   const t = Store.secondsLeft(), m = s.market, w = $('clockwrap');
   if (!t) { w.hidden = true; return; }
   w.hidden = false;

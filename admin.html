@@ -12,10 +12,9 @@
 <body>
 <div class="gate" id="gate">
   <div class="panel">
-    <h2>Quiz master sign-in</h2>
-    <div class="field"><label for="email">Admin email</label><input id="email" type="email" autocomplete="username"></div>
-    <div class="field"><label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password"></div>
-    <button class="btn gold big" id="login" type="button">Sign in</button>
+    <h2>Quiz master login</h2>
+    <div class="field"><label for="pass">Passcode</label><input id="pass" type="password" autocomplete="off"></div>
+    <button class="btn gold big" id="login" type="button">Open control room</button>
     <p class="msg" id="gateMsg" style="margin-top:.6rem"></p>
   </div>
 </div>
@@ -24,7 +23,6 @@
   <div class="logo-chip"><img src="logo.png" alt="PMM 3.0"></div>
   <div class="brand"><h1>Super Traders</h1><p>Quiz master control room. Keep this page open during the round.</p></div>
   <div class="spacer"></div>
-  <button class="btn ghost sm" id="logout" type="button" hidden>Sign out</button>
   <span id="status" class="pill"></span>
 </header>
 <div id="statusline" class="statusline"></div>
@@ -116,56 +114,20 @@
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const A = Store.actions;
 
-async function authorizeAdmin(user) {
-  try {
-    await firebase.functions().httpsCallable('claimAdmin')();
-    await user.getIdToken(true);
-    await Store.enableAdmin();
-    $('gate').hidden = true;
-    $('logout').hidden = false;
-    $('gateMsg').textContent = '';
-  } catch (err) {
-    Store.disableAdmin();
-    $('gate').hidden = false;
-    $('logout').hidden = true;
-    $('gateMsg').textContent = err.code === 'functions/permission-denied'
-      ? 'This account is not authorized as an admin.'
-      : 'Secure sign-in is unavailable: ' + err.message;
-    try {
-      await firebase.auth().signOut();
-    } catch (signOutError) {
-      $('gateMsg').textContent += ' Sign-out failed: ' + signOutError.message;
-    }
-  }
-}
-if (Store.mode === 'local') {
-  $('gateMsg').textContent = 'Secure admin access requires Firebase configuration.';
-  $('login').disabled = true;
-} else {
-  firebase.auth().onAuthStateChanged(user => {
-    if (user) authorizeAdmin(user);
-    else {
-      Store.disableAdmin();
-      $('gate').hidden = false;
-      $('logout').hidden = true;
-    }
-  });
-}
+// ---- passcode gate (casual, client-side) ----
+function unlock() { $('gate').hidden = true; }
+if (sessionStorage.getItem('superTraders:admin') === '1') unlock();
 $('login').onclick = () => {
-  $('gateMsg').textContent = '';
-  firebase.auth().signInWithEmailAndPassword($('email').value.trim(), $('pass').value)
-    .catch(err => { $('gateMsg').textContent = 'Sign-in failed: ' + err.message; });
+  if ($('pass').value === (window.ADMIN_PASSCODE || 'supertraders')) { sessionStorage.setItem('superTraders:admin', '1'); unlock(); }
+  else $('gateMsg').textContent = 'That passcode is not right.';
 };
 $('pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('login').click(); });
-$('logout').onclick = () => firebase.auth().signOut();
 
 Store.onStatus((kind, msg) => { const el = $('statusline'); el.textContent = msg; el.className = 'statusline' + (kind === 'error' ? ' error' : ''); });
 function say(t, ok) { const m = $('msg'); m.textContent = t || ''; m.className = 'msg' + (ok ? ' ok' : ''); }
@@ -204,6 +166,7 @@ $('saveSettings').onclick = () => run(A.saveSettings({
 $('teamRows').addEventListener('click', e => {
   const id = e.target.dataset.id; if (!id) return;
   if (e.target.dataset.act === 'set') run(A.setPoints(id, Number(document.querySelector(`input[data-pts="${id}"]`).value) || 0));
+  if (e.target.dataset.act === 'free' && confirm('Unlock this team? It can then be picked again on any device.')) run(A.releaseTeam(id));
   if (e.target.dataset.act === 'del' && confirm('Remove this team?')) run(A.removeTeam(id));
 });
 
@@ -232,7 +195,7 @@ function render(s) {
   if (key !== teamsKey) {
     teamsKey = key;
     $('noTeams').hidden = s.teams.length > 0;
-    $('teamRows').innerHTML = s.teams.map(t => `<tr><td>${UI.esc(t.name)}</td><td><input type="number" step="1" value="${t.points}" data-pts="${UI.esc(t.id)}" aria-label="Points for ${UI.esc(t.name)}"></td><td style="white-space:nowrap"><button class="btn sm" data-act="set" data-id="${UI.esc(t.id)}" type="button">Set</button> <button class="btn ghost sm" data-act="del" data-id="${UI.esc(t.id)}" type="button">Remove</button></td></tr>`).join('');
+    $('teamRows').innerHTML = s.teams.map(t => `<tr><td>${UI.esc(t.name)}<div class="muted small">${t.claimedBy ? 'Locked to a device' : 'Not joined'}</div></td><td><input type="number" step="1" value="${t.points}" data-pts="${UI.esc(t.id)}" aria-label="Points for ${UI.esc(t.name)}"></td><td style="white-space:nowrap"><button class="btn sm" data-act="set" data-id="${UI.esc(t.id)}" type="button">Set</button> ${t.claimedBy ? `<button class="btn ghost sm" data-act="free" data-id="${UI.esc(t.id)}" type="button">Unlock</button> ` : ''}<button class="btn ghost sm" data-act="del" data-id="${UI.esc(t.id)}" type="button">Remove</button></td></tr>`).join('');
   }
   if (!settingsLoaded) {
     settingsLoaded = true;
