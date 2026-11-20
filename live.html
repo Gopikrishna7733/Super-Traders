@@ -91,8 +91,8 @@ function render(s) {
   // owner / result banner
   const b = $('banner'), owner = s.teams.find(t => t.id === m.ownerId);
   b.className = 'banner'; b.hidden = false;
-  if (m.phase === 'bidding') { b.classList.add('owner'); b.textContent = 'Highest bidder: ' + owner.name + ' at ' + UI.fmt(m.price); }
-  else if (m.phase === 'answering') { b.classList.add('owner'); b.textContent = owner.name + ' owns this question at ' + UI.fmt(m.price) + ' and must answer now'; }
+  if (m.phase === 'bidding') { b.classList.add('owner'); b.textContent = 'Highest bidder: ' + (owner ? owner.name : 'a team') + ' at ' + UI.fmt(m.price); }
+  else if (m.phase === 'answering') { b.classList.add('owner'); b.textContent = (owner ? owner.name : 'A team') + ' owns this question at ' + UI.fmt(m.price) + ' and must answer now'; }
   else if (m.phase === 'result' && m.result) {
     const ans = m.result.answer ? ' Correct answer: ' + m.result.answer + '.' : '';
     if (m.result.skipped) b.textContent = 'Question skipped. No points changed.' + ans;
@@ -105,7 +105,7 @@ function render(s) {
   const rk = UI.rank(s), top = Math.max(1, ...rk.map(t => t.points));
   $('ranks').innerHTML = rk.length ? rk.map((t, i) =>
     `<li class="${t.id === m.ownerId && (m.phase === 'bidding' || m.phase === 'answering') ? 'owner' : ''}"><span class="fill" style="width:${Math.max(0, t.points) / top * 100}%"></span><span class="pos">${i + 1}</span><span>${UI.esc(t.name)}</span><span class="pts">${UI.fmt(t.points)}</span></li>`).join('')
-    : '<li class="muted">Teams appear here once the quiz master adds them.</li>';
+    : '<li class="empty muted">Teams appear here once the quiz master adds them.</li>';
 }
 
 function tick() {

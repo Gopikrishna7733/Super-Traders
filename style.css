@@ -146,3 +146,6 @@ td input { padding: .35rem .5rem; }
 .typebtns input:checked + span { background: var(--violet); border-color: var(--violet); }
 .typebtns input:focus-visible + span { outline: 3px solid var(--gold); outline-offset: 2px; }
 @media (max-width: 600px) { .opts { grid-template-columns: 1fr; } }
+/* fixes: price block must not stretch, empty-state rows must span the full width */
+.row > .price, .row > .team-price { flex: 0 0 auto; }
+.ranks li.empty { display: block; }

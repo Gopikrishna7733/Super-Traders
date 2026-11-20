@@ -44,6 +44,14 @@
   }
   function addLog(s, m) { s.log.unshift({ t: Date.now(), m }); if (s.log.length > 80) s.log.length = 80; }
 
+  // Public state plus (for a signed-in admin) the private answer key. Shared by the snapshot listeners.
+  function emitCurrent(raw) {
+    const current = normalise(raw);
+    current.market.answer = '';
+    if (adminEnabled && privateAnswerQNo === current.market.qNo) current.market.answer = privateAnswer;
+    emit(current);
+  }
+
   // ---------- backends ----------
   const cfg = window.FIREBASE_CONFIG;
   if (cfg && cfg.apiKey && window.firebase) {
@@ -56,13 +64,7 @@
     const ensureBackendGame = () => {
       if (initializationRequested) return;
       initializationRequested = true;
-      firebase.functions().httpsCallable('gameAction')({ action: 'ensureGame' }).catch(err => setStatus('error', 'Could not initialize game: ' + err.message));
-    };
-    const emitCurrent = raw => {
-      const current = normalise(raw);
-      current.market.answer = '';
-      if (adminEnabled && privateAnswerQNo === current.market.qNo) current.market.answer = privateAnswer;
-      emit(current);
+      firebase.functions().httpsCallable('gameAction')({ action: 'ensureGame' }).catch(err => { initializationRequested = false; setStatus('error', 'Could not initialize game: ' + err.message + (err.code ? ' (' + err.code + ')' : '') + '. Check the Cloud Function logs.'); });
     };
     publicRef.onSnapshot(snap => {
       if (!snap.exists) {
