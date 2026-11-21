@@ -92,7 +92,7 @@ let myId = localStorage.getItem(KEY);
 let deviceId = localStorage.getItem('superTraders:device');
 if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('superTraders:device', deviceId); }
 let pickerFilled = '';
-let prevPrice = null, picked = null;
+let prevPrice = null, picked = null, prevQ = null, prevBids = 0, lastRanks = '';
 
 Store.onStatus((kind, msg) => { const el = $('statusline'); el.textContent = msg; el.className = 'statusline' + (kind === 'error' ? ' error' : ''); });
 
@@ -181,6 +181,8 @@ function render(s) {
   else { tr.className = 'trend'; tr.textContent = ''; }
 
   const iLead = m.ownerId === myId, owner = s.teams.find(t => t.id === m.ownerId);
+  const evs = m.phase === 'idle' ? [] : UI.bidEvents(m), lastEv = evs[evs.length - 1];
+  const isNewBid = prevQ === m.qNo && evs.length > prevBids; prevQ = m.qNo; prevBids = evs.length;
   const b = $('banner'); b.className = 'banner'; b.hidden = false;
   $('buyBox').hidden = true; $('bidBox').hidden = true; $('answerBox').hidden = true;
 
@@ -194,7 +196,8 @@ function render(s) {
     $('bidBox').hidden = false;
     const next = m.price + st.step, can = me.points >= next;
     if (iLead) { b.classList.add('owner'); b.textContent = 'You hold the highest bid at ' + UI.fmt(m.price) + '. Hold on until the market closes.'; }
-    else b.textContent = owner.name + ' leads at ' + UI.fmt(m.price) + '. Outbid them or let it go.';
+    else b.textContent = (lastEv ? lastEv.name + (lastEv.first ? ' bought at ' : ' raised the bid to ') : owner.name + ' leads at ') + UI.fmt(m.price) + '. Outbid them or let it go.';
+    if (isNewBid) b.classList.add('pop');
     $('quickBid').textContent = 'Bid ' + UI.fmt(next);
     $('quickBid').disabled = iLead || !can; $('customBtn').disabled = iLead || !can; $('custom').disabled = iLead || !can;
     $('custom').min = next; $('custom').max = me.points;
@@ -221,8 +224,8 @@ function render(s) {
   } else b.hidden = true;
   if (m.phase !== 'open' && m.phase !== 'bidding') say('');
 
-  const rk = UI.rank(s);
-  $('ranks').innerHTML = rk.map((t, i) => `<li class="${t.id === myId ? 'me' : ''}"><span class="pos">${i + 1}</span><span>${UI.esc(t.name)}</span><span class="pts">${UI.fmt(t.points)}</span></li>`).join('');
+  const html = UI.standingsHTML(s, { meId: myId });
+  if (html !== lastRanks) { lastRanks = html; $('ranks').innerHTML = html; }
 }
 
 function tick() {

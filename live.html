@@ -29,12 +29,14 @@
     <ol class="opts" id="opts"></ol>
 
     <div class="ticker">
+      <div id="raise" class="raise" role="status" aria-live="polite" hidden></div>
       <div class="row" style="align-items:flex-end;gap:1.2rem">
         <div class="price idle num" id="price">0</div>
         <div style="flex:0 0 auto;padding-bottom:1rem">
           <div class="unit">points</div>
           <div class="trend" id="trend"></div>
         </div>
+        <div class="leader" id="leader" hidden><small id="leaderLabel">Highest bidder</small><b id="leaderName"></b></div>
       </div>
       <div id="clockwrap" hidden>
         <div class="clock-label" id="clocklabel"></div>
@@ -42,6 +44,7 @@
       </div>
     </div>
 
+    <ol class="feed" id="feed" aria-label="Bid history"></ol>
     <div class="chart" id="chart"></div>
     <div id="banner" class="banner" hidden></div>
   </section>
@@ -59,7 +62,7 @@
 <script src="common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let prevPrice = null, prevRev = null;
+let prevPrice = null, prevRev = null, prevQ = null, prevBids = 0, prevLeader = null, raiseTimer = null, lastRanks = '';
 
 Store.onStatus((kind, msg) => { const el = $('statusline'); el.textContent = msg; el.className = 'statusline' + (kind === 'error' ? ' error' : ''); });
 $('fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
@@ -86,7 +89,27 @@ function render(s) {
     tr.className = 'trend ' + (d > 0 ? 'up' : 'down'); tr.textContent = (d > 0 ? '▲ +' : '▼ −') + Math.abs(d);
   } else { tr.className = 'trend'; tr.textContent = ''; }
 
-  $('chart').innerHTML = UI.chartSVG(m.phase === 'idle' ? [] : h);
+  $('chart').innerHTML = UI.chartSVG(m.phase === 'idle' ? [] : h, m.labels);
+
+  // who is bidding: leader card, "raised the bid" announcement and bid feed
+  const ev = m.phase === 'idle' ? [] : UI.bidEvents(m), lastEv = ev[ev.length - 1];
+  const ld = $('leader');
+  if (lastEv) {
+    ld.hidden = false;
+    $('leaderLabel').textContent = m.phase === 'bidding' ? 'Highest bidder' : m.phase === 'answering' ? 'Owner, answering now' : 'Sold to';
+    $('leaderName').textContent = lastEv.name;
+    if (prevLeader !== null && prevLeader !== lastEv.name + lastEv.price) { ld.classList.remove('pop'); void ld.offsetWidth; ld.classList.add('pop'); }
+    prevLeader = lastEv.name + lastEv.price;
+  } else { ld.hidden = true; prevLeader = null; }
+  const rz = $('raise');
+  if (prevQ === m.qNo && ev.length > prevBids && m.phase === 'bidding' && lastEv) {
+    rz.textContent = lastEv.first ? lastEv.name + ' bought the question at ' + UI.fmt(lastEv.price) : '▲ ' + lastEv.name + ' raised the bid to ' + UI.fmt(lastEv.price) + ' (+' + UI.fmt(lastEv.delta) + ')';
+    rz.hidden = false; rz.style.animation = 'none'; void rz.offsetWidth; rz.style.animation = '';
+    clearTimeout(raiseTimer); raiseTimer = setTimeout(() => { rz.hidden = true; }, 4000);
+  }
+  if (m.phase !== 'bidding') { rz.hidden = true; }
+  prevQ = m.qNo; prevBids = ev.length;
+  $('feed').innerHTML = ev.slice(-5).reverse().map((e, i) => `<li class="${i === 0 ? 'new' : ''}"><b>${UI.esc(e.name)}</b> ${e.first ? 'bought at' : 'raised to'} ${UI.fmt(e.price)}${!e.first && e.delta ? ' (+' + UI.fmt(e.delta) + ')' : ''}</li>`).join('');
 
   // owner / result banner
   const b = $('banner'), owner = s.teams.find(t => t.id === m.ownerId);
@@ -102,11 +125,9 @@ function render(s) {
   } else if (m.phase === 'open') b.textContent = 'No owner yet. Buy now before the price falls further, or wait for it to drop.';
   else b.hidden = true;
 
-  // standings
-  const rk = UI.rank(s), top = Math.max(1, ...rk.map(t => t.points));
-  $('ranks').innerHTML = rk.length ? rk.map((t, i) =>
-    `<li class="${t.id === m.ownerId && (m.phase === 'bidding' || m.phase === 'answering') ? 'owner' : ''}"><span class="fill" style="width:${Math.max(0, t.points) / top * 100}%"></span><span class="pos">${i + 1}</span><span>${UI.esc(t.name)}</span><span class="pts">${UI.fmt(t.points)}</span></li>`).join('')
-    : '<li class="empty muted">Teams appear here once the quiz master adds them.</li>';
+  // standings (only redrawn when something changed, so the podium animations keep running)
+  const html = UI.standingsHTML(s, { showOwner: true });
+  if (html !== lastRanks) { lastRanks = html; $('ranks').innerHTML = html; }
 }
 
 function tick() {

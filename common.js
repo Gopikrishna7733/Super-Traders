@@ -13,7 +13,7 @@
     return {
       teams: [],
       settings: { initialPrice: 100, step: 10, floor: 10, decayAmt: 10, decayEvery: 4, closeIn: 8, answerTime: 30 },
-      market: { phase: 'idle', qNo: 0, qType: 'mcq', question: '', options: [], answer: '', price: 0, ownerId: null, history: [], rev: 0, result: null, submitted: null, timeUp: false },
+      market: { phase: 'idle', qNo: 0, qType: 'mcq', question: '', options: [], answer: '', price: 0, ownerId: null, history: [], labels: [], rev: 0, result: null, submitted: null, timeUp: false },
       log: []
     };
   }
@@ -190,7 +190,7 @@
         if (c.error) return c;
         m.qType = c.qType; m.options = c.options; m.answer = c.answer;
         m.qNo += 1; m.phase = 'open'; m.question = c.question; m.price = price;
-        m.ownerId = null; m.history = [price]; m.result = null; m.submitted = null; m.timeUp = false; m.rev += 1;
+        m.ownerId = null; m.history = [price]; m.labels = ['']; m.result = null; m.submitted = null; m.timeUp = false; m.rev += 1;
         addLog(s, `Question ${m.qNo}: market opened at ${price}`);
       });
     },
@@ -239,7 +239,7 @@
         }
         if (price > t.points) return { error: 'Not enough trading capital (you have ' + t.points + ')' };
         const first = m.phase === 'open';
-        m.price = price; m.ownerId = teamId; m.phase = 'bidding'; m.history.push(price); m.rev += 1;
+        m.price = price; m.ownerId = teamId; m.phase = 'bidding'; m.history.push(price); (m.labels = m.labels || []).push(t.name); m.rev += 1;
         addLog(s, `${t.name} ${first ? 'bought at' : 'bid'} ${price}`);
         return { ok: true, price };
       });
@@ -250,7 +250,7 @@
         if (m.phase !== 'open' || m.rev !== expectedRev) return { error: 'stale' };
         const next = Math.max(s.settings.floor, m.price - s.settings.decayAmt);
         if (next >= m.price) return { error: 'floor' };
-        m.price = next; m.history.push(next); m.rev += 1;
+        m.price = next; m.history.push(next); (m.labels = m.labels || []).push(''); m.rev += 1;
       });
     },
     closeBidding(expectedRev) { // market closure: buyer must now answer
@@ -354,10 +354,42 @@
     }).join('');
   }
 
+  // every buy/raise in order, with the team that made it
+  function bidEvents(m) {
+    const out = [], h = m.history || [], L = m.labels || [];
+    let seen = false;
+    for (let i = 0; i < h.length; i++) if (L[i]) { out.push({ name: L[i], price: h[i], delta: i ? h[i] - h[i - 1] : 0, first: !seen }); seen = true; }
+    return out;
+  }
+
   const rank = s => s.teams.slice().sort((a, b) => b.points - a.points);
 
+  // Standings rows. 1st place gets gold sparkles, 2nd a silver glance, 3rd a bronze glow.
+  // Teams level on points share a place, and nothing is animated while everyone is tied.
+  function standingsHTML(s, o) {
+    o = o || {};
+    const rk = rank(s);
+    if (!rk.length) return '<li class="empty muted">Teams appear here once the quiz master adds them.</li>';
+    const top = Math.max(1, ...rk.map(t => t.points));
+    const tied = rk.every(t => t.points === rk[0].points);
+    const m = s.market, live = m.phase === 'bidding' || m.phase === 'answering';
+    let prev = null, place = 0;
+    return rk.map((t, i) => {
+      if (t.points !== prev) { place = i + 1; prev = t.points; }
+      const medal = !tied && place <= 3 ? place : 0;
+      const cls = [];
+      if (medal) cls.push('r' + medal);
+      if (o.showOwner && live && t.id === m.ownerId) cls.push('owner');
+      if (o.meId && t.id === o.meId) cls.push('me');
+      let fx = '';
+      if (medal === 1) fx = [8, 21, 35, 50, 64, 78, 90].map((l, k) => `<i class="sp" style="left:${l}%;animation-delay:${(k * 0.37).toFixed(2)}s"></i>`).join('');
+      if (medal === 3) fx = [18, 52, 82].map((l, k) => `<i class="em" style="left:${l}%;animation-delay:${(k * 0.8).toFixed(2)}s"></i>`).join('');
+      return `<li class="${cls.join(' ')}"><span class="fill" style="width:${Math.max(0, t.points) / top * 100}%"></span>${fx}<span class="pos">${place}</span><span>${esc(t.name)}</span><span class="pts">${fmt(t.points)}</span></li>`;
+    }).join('');
+  }
+
   // Price chart: grey steps over time, green risers for bids, red risers for drops.
-  function chartSVG(h) {
+  function chartSVG(h, labels) {
     const W = 640, H = 240, P = 22;
     if (!h || !h.length) return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Price chart"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="#a99ad6" font-size="16">The price chart starts when the market opens</text></svg>`;
     const lo = Math.min(...h), hi = Math.max(...h), span = Math.max(hi - lo, 20), mid = (hi + lo) / 2;
@@ -371,6 +403,11 @@
       out += `<line x1="${x(i - 1)}" y1="${y(h[i - 1])}" x2="${x(i)}" y2="${y(h[i - 1])}" stroke="#a99ad6" stroke-width="3" stroke-linecap="round"/>`;
       if (h[i] !== h[i - 1]) out += `<line x1="${x(i)}" y1="${y(h[i - 1])}" x2="${x(i)}" y2="${y(h[i])}" stroke="${h[i] > h[i - 1] ? '#34d399' : '#fb5a73'}" stroke-width="5" stroke-linecap="round"/>`;
     }
+    (labels || []).forEach((name, i) => { // team name above each bid
+      if (!name || i >= h.length) return;
+      const short = name.length > 12 ? name.slice(0, 11) + '…' : name;
+      out += `<text x="${x(i)}" y="${Math.min(y(h[i]), y(h[Math.max(0, i - 1)])) - 12}" text-anchor="middle" fill="#ffe48c" font-size="13" font-weight="600">${esc(short)}</text>`;
+    });
     const last = h.length - 1;
     const col = last === 0 || h[last] === h[last - 1] ? '#f7b924' : h[last] > h[last - 1] ? '#34d399' : '#fb5a73';
     out += `<circle cx="${x(last)}" cy="${y(h[last])}" r="8" fill="${col}"/>`;
@@ -386,5 +423,5 @@
     update, actions, secondsLeft,
     subscribeBank(fn) { bankListeners.push(fn); initBank(); if (bankState) fn(bankState); }
   };
-  window.UI = { esc, fmt, phaseInfo, rank, chartSVG, typeLabel, answerText, optionsHTML };
+  window.UI = { esc, fmt, phaseInfo, rank, standingsHTML, chartSVG, bidEvents, typeLabel, answerText, optionsHTML };
 })();
