@@ -142,6 +142,7 @@
         const t = s.teams.find(x => x.id === id);
         if (!t) return { error: 'Team not found. Ask the admin.' };
         if (t.claimedBy && t.claimedBy !== deviceId) return { error: 'That team is already taken on another device. Ask the admin.' };
+        s.teams.forEach(x => { if (x.id !== id && x.claimedBy === deviceId) x.claimedBy = null; }); // one team per device
         t.claimedBy = deviceId; addLog(s, t.name + ' joined and is now locked');
       });
     },

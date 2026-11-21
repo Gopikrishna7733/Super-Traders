@@ -105,10 +105,13 @@ $('enter').onclick = async () => {
   const v = $('teamSelect').value; if (!v) return;
   const name = $('teamSelect').selectedOptions[0].textContent;
   if (!confirm('Join as "' + name + '"? This locks the team to this device, and only the admin can change it.')) return;
-  $('pickMsg').textContent = '';
+  $('pickMsg').className = 'msg'; $('pickMsg').textContent = '';
+  $('enter').disabled = true;
   const r = await Store.actions.claimTeam(v, deviceId);
-  if (r.error) { $('pickMsg').textContent = r.error; return; }
-  myId = v; localStorage.setItem(KEY, v); render(Store.state());
+  if (r.error) { $('pickMsg').textContent = r.error; $('enter').disabled = false; return; }
+  const st = Store.state();
+  if (st && st.teams.find(t => t.claimedBy === deviceId)) render(st);
+  else { $('pickMsg').className = 'msg ok'; $('pickMsg').textContent = 'Joining…'; } // the desk opens as soon as the sync arrives
 };
 $('buy').onclick = () => bid();
 $('quickBid').onclick = () => { const s = Store.state(); bid(s.market.price + s.settings.step); };
@@ -116,9 +119,10 @@ $('customBtn').onclick = () => { const v = $('custom').value; if (!v) return say
 $('custom').addEventListener('keydown', e => { if (e.key === 'Enter') $('customBtn').click(); });
 
 function render(s) {
-  const me = s.teams.find(t => t.id === myId && t.claimedBy === deviceId);
+  // The team this device holds is the source of truth, so a slow sync can never lock a team out of its own desk.
+  const me = s.teams.find(t => t.claimedBy === deviceId);
   if (!me) { // show picker (also when the admin unlocked or removed this team)
-    if (myId) { myId = null; localStorage.removeItem(KEY); }
+    myId = null; localStorage.removeItem(KEY);
     $('desk').hidden = true; $('picker').hidden = false;
     const free = s.teams.filter(t => !t.claimedBy);
     const key = free.map(t => t.id + t.name).join('|');
@@ -130,6 +134,7 @@ function render(s) {
     $('noTeams').textContent = s.teams.length ? 'All teams are taken. If yours is locked on another device, ask the admin.' : 'No teams yet. Ask the quiz master to add teams, then reload this page.';
     return;
   }
+  myId = me.id; localStorage.setItem(KEY, me.id);
   $('picker').hidden = true; $('desk').hidden = false;
   const m = s.market, st = s.settings, info = UI.phaseInfo(s);
   $('teamName').textContent = me.name;
