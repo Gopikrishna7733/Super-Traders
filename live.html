@@ -81,7 +81,7 @@ function render(s) {
   }
   prevPrice = m.phase === 'idle' ? null : m.price; prevRev = m.rev;
   const h = m.history, tr = $('trend');
-  if (m.phase !== 'idle' && h.length > 1) {
+  if (m.phase !== 'idle' && h.length > 1 && h[h.length - 1] !== h[h.length - 2]) {
     const d = h[h.length - 1] - h[h.length - 2];
     tr.className = 'trend ' + (d > 0 ? 'up' : 'down'); tr.textContent = (d > 0 ? '▲ +' : '▼ −') + Math.abs(d);
   } else { tr.className = 'trend'; tr.textContent = ''; }
@@ -92,12 +92,13 @@ function render(s) {
   const b = $('banner'), owner = s.teams.find(t => t.id === m.ownerId);
   b.className = 'banner'; b.hidden = false;
   if (m.phase === 'bidding') { b.classList.add('owner'); b.textContent = 'Highest bidder: ' + (owner ? owner.name : 'a team') + ' at ' + UI.fmt(m.price); }
-  else if (m.phase === 'answering') { b.classList.add('owner'); b.textContent = (owner ? owner.name : 'A team') + ' owns this question at ' + UI.fmt(m.price) + ' and must answer now'; }
+  else if (m.phase === 'answering') { b.classList.add('owner'); b.textContent = (owner ? owner.name : 'A team') + ' owns this question at ' + UI.fmt(m.price) + (m.submitted ? ' and has locked in an answer.' : ' and must answer now'); }
   else if (m.phase === 'result' && m.result) {
     const ans = m.result.answer ? ' Correct answer: ' + m.result.answer + '.' : '';
+    const gv = m.result.given ? ' Answered: ' + m.result.given + '.' : '';
     if (m.result.skipped) b.textContent = 'Question skipped. No points changed.' + ans;
-    else if (m.result.correct) { b.classList.add('win'); b.textContent = m.result.teamName + ' answered correctly: profit of ' + UI.fmt(m.result.delta) + ' points (2× ' + UI.fmt(m.result.price) + ').' + ans; }
-    else { b.classList.add('lose'); b.textContent = m.result.teamName + ' answered incorrectly: loss of ' + UI.fmt(-m.result.delta) + ' points.' + ans; }
+    else if (m.result.correct) { b.classList.add('win'); b.textContent = m.result.teamName + ' answered correctly: profit of ' + UI.fmt(m.result.delta) + ' points (2× ' + UI.fmt(m.result.price) + ').' + gv + ans; }
+    else { b.classList.add('lose'); b.textContent = m.result.teamName + ' answered incorrectly: loss of ' + UI.fmt(-m.result.delta) + ' points.' + gv + ans; }
   } else if (m.phase === 'open') b.textContent = 'No owner yet. Buy now before the price falls further, or wait for it to drop.';
   else b.hidden = true;
 

@@ -13,7 +13,7 @@
     return {
       teams: [],
       settings: { initialPrice: 100, step: 10, floor: 10, decayAmt: 10, decayEvery: 4, closeIn: 8, answerTime: 30 },
-      market: { phase: 'idle', qNo: 0, qType: 'mcq', question: '', options: [], answer: '', price: 0, ownerId: null, history: [], rev: 0, result: null },
+      market: { phase: 'idle', qNo: 0, qType: 'mcq', question: '', options: [], answer: '', price: 0, ownerId: null, history: [], rev: 0, result: null, submitted: null, timeUp: false },
       log: []
     };
   }
@@ -94,6 +94,24 @@
     return { qType: type, question: String(q.question || '').trim(), options, answer };
   }
 
+  // what the team answered, as text for the screens
+  function givenText(m) {
+    if (!m.submitted) return '';
+    const a = m.submitted.answer;
+    return m.qType === 'mcq' ? a + ': ' + (m.options['ABCD'.indexOf(a)] || '') : a;
+  }
+  // scores the owner team and closes the question (shared by auto-marking and the admin buttons)
+  function finish(s, correct) {
+    const m = s.market, t = s.teams.find(x => x.id === m.ownerId);
+    if (!t) return { error: 'Owner not found' };
+    const delta = correct ? 2 * m.price : -m.price;
+    t.points += delta;
+    m.result = { correct: !!correct, delta, teamId: t.id, teamName: t.name, price: m.price, answer: answerText(m), given: givenText(m) };
+    m.phase = 'result'; m.rev += 1;
+    addLog(s, `${t.name} answered ${correct ? 'correctly' : 'incorrectly'}: ${delta > 0 ? '+' : ''}${delta}`);
+    return { ok: true, correct: !!correct, delta };
+  }
+
   // ---------- question bank (its own document, only the admin page reads it) ----------
   const bankListeners = [];
   let bankState = null, bankBackend = null;
@@ -172,7 +190,7 @@
         if (c.error) return c;
         m.qType = c.qType; m.options = c.options; m.answer = c.answer;
         m.qNo += 1; m.phase = 'open'; m.question = c.question; m.price = price;
-        m.ownerId = null; m.history = [price]; m.result = null; m.rev += 1;
+        m.ownerId = null; m.history = [price]; m.result = null; m.submitted = null; m.timeUp = false; m.rev += 1;
         addLog(s, `Question ${m.qNo}: market opened at ${price}`);
       });
     },
@@ -244,17 +262,38 @@
         addLog(s, `Market closed: ${t ? t.name : 'team'} owns the question at ${m.price}`);
       });
     },
-    markResult(correct) {
+    markResult(correct) { // admin judges the answer (needed for typed answers or when time ran out)
+      return update(s => {
+        if (s.market.phase !== 'answering') return { error: 'No team is answering right now' };
+        return finish(s, correct);
+      });
+    },
+    submitAnswer(teamId, text) { // the owner team locks in its answer from its own screen
       return update(s => {
         const m = s.market;
-        if (m.phase !== 'answering') return { error: 'No team is answering right now' };
-        const t = s.teams.find(x => x.id === m.ownerId);
-        if (!t) return { error: 'Owner not found' };
-        const delta = correct ? 2 * m.price : -m.price;
-        t.points += delta;
-        m.result = { correct: !!correct, delta, teamId: t.id, teamName: t.name, price: m.price, answer: answerText(m) };
-        m.phase = 'result'; m.rev += 1;
-        addLog(s, `${t.name} answered ${correct ? 'correctly' : 'incorrectly'}: ${delta > 0 ? '+' : ''}${delta}`);
+        if (m.phase !== 'answering') return { error: 'No answer is being taken right now' };
+        if (m.ownerId !== teamId) return { error: 'Only the team that bought the question can answer' };
+        if (m.submitted) return { error: 'Your answer is already locked in' };
+        if (m.timeUp) return { error: "Time's up" };
+        let a = String(text || '').trim().slice(0, 200);
+        if (!a) return { error: 'Choose or type an answer first' };
+        if (m.qType === 'mcq') {
+          a = a.toUpperCase();
+          if (!/^[A-D]$/.test(a) || !m.options['ABCD'.indexOf(a)]) return { error: 'Pick one of the options' };
+          m.submitted = { teamId, answer: a, at: Date.now() };
+          return finish(s, a === m.answer); // multiple choice is marked automatically
+        }
+        m.submitted = { teamId, answer: a, at: Date.now() }; // typed answers wait for the quiz master
+        const t = s.teams.find(x => x.id === teamId);
+        addLog(s, (t ? t.name : 'Team') + ' locked in an answer');
+        return { ok: true, pending: true };
+      });
+    },
+    timeUp(expectedRev) { // admin page calls this when the answer timer ends; late answers are refused
+      return update(s => {
+        const m = s.market;
+        if (m.phase !== 'answering' || m.rev !== expectedRev || m.timeUp) return { error: 'stale' };
+        m.timeUp = true; // no rev bump, so countdowns are not restarted
       });
     },
     skip() {
@@ -301,9 +340,18 @@
     return m.answer;
   }
   // lettered option cards for MCQ; the right one lights up once the question is finished
-  function optionsHTML(m) {
+  function optionsHTML(m, pick) { // pick = { enabled, selected } makes the cards tappable
     if (m.qType !== 'mcq' || m.phase === 'idle') return '';
-    return m.options.map((o, i) => o ? `<li class="${m.phase === 'result' && 'ABCD'[i] === m.answer ? 'right' : ''}"><b>${'ABCD'[i]}</b><span>${esc(o)}</span></li>` : '').join('');
+    const done = m.phase === 'result', given = m.submitted && m.submitted.answer;
+    return m.options.map((o, i) => {
+      if (!o) return '';
+      const L = 'ABCD'[i], cls = [];
+      if (done && L === m.answer) cls.push('right');
+      if (done && given === L && L !== m.answer) cls.push('wrong');
+      if (pick && pick.enabled) { cls.push('pick'); if (pick.selected === L) cls.push('selected'); }
+      const attrs = pick && pick.enabled ? ` data-letter="${L}" tabindex="0" role="radio" aria-checked="${pick.selected === L}"` : '';
+      return `<li class="${cls.join(' ')}"${attrs}><b>${L}</b><span>${esc(o)}</span></li>`;
+    }).join('');
   }
 
   const rank = s => s.teams.slice().sort((a, b) => b.points - a.points);

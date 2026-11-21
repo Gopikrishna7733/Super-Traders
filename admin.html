@@ -225,8 +225,13 @@ function render(s) {
   $('owner').textContent = owner ? owner.name : 'None';
 
   const keyBox = $('key'), ans = UI.answerText(m);
-  keyBox.hidden = m.phase === 'idle' || m.phase === 'result' || !ans;
-  keyBox.textContent = 'Answer key (' + UI.typeLabel(m.qType) + '): ' + ans;
+  keyBox.hidden = m.phase === 'idle' || m.phase === 'result' || (!ans && !m.submitted);
+  let kb = 'Answer key (' + UI.typeLabel(m.qType) + '): ' + (ans || 'none set');
+  if (m.phase === 'answering') {
+    const norm = x => String(x || '').trim().toLowerCase();
+    kb += '\nTeam answer: ' + (m.submitted ? m.submitted.answer + (m.qType !== 'mcq' && m.answer && norm(m.submitted.answer) === norm(m.answer) ? ' (matches the key)' : '') : m.timeUp ? 'none, time is up' : 'waiting...');
+  }
+  keyBox.style.whiteSpace = 'pre-line'; keyBox.textContent = kb;
   const canOpen = m.phase === 'idle' || m.phase === 'result';
   $('openForm').hidden = !canOpen;
   if (canOpen && document.activeElement !== $('p0') && !$('p0').dataset.touched) $('p0').value = st.initialPrice;
@@ -272,6 +277,7 @@ function tick() {
   if (!t || t.left > 0 || busy) return;
   if (m.phase === 'open' && m.price > s.settings.floor) { busy = true; A.decay(m.rev).finally(() => { busy = false; }); }
   else if (m.phase === 'bidding') { busy = true; A.closeBidding(m.rev).finally(() => { busy = false; }); }
+  else if (m.phase === 'answering' && !m.timeUp) { busy = true; A.timeUp(m.rev).finally(() => { busy = false; }); }
 }
 
 Store.subscribe(render);
