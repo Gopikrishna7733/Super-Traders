@@ -81,6 +81,57 @@
 
   const update = fn => backend(fn).catch(e => ({ error: e.message || 'Could not save' }));
 
+  // checks one question (used when opening the market and when saving to the bank)
+  function cleanQuestion(q) {
+    q = q || {};
+    const type = ['mcq', 'blank', 'statement'].indexOf(q.qType) >= 0 ? q.qType : 'mcq';
+    let options = [], answer = String(q.answer || '').trim();
+    if (type === 'mcq') {
+      options = [0, 1, 2, 3].map(i => String((q.options || [])[i] || '').trim());
+      if (options.filter(Boolean).length < 2) return { error: 'Add at least two options' };
+      if (!/^[A-D]$/.test(answer) || !options['ABCD'.indexOf(answer)]) return { error: 'Pick which option is correct' };
+    }
+    return { qType: type, question: String(q.question || '').trim(), options, answer };
+  }
+
+  // ---------- question bank (its own document, only the admin page reads it) ----------
+  const bankListeners = [];
+  let bankState = null, bankBackend = null;
+  function bankEmit(b) { bankState = b; bankListeners.forEach(f => f(b)); }
+  function initBank() {
+    if (bankBackend) return;
+    const fresh = () => ({ items: [] });
+    const norm = raw => ({ items: (raw && raw.items) || [] });
+    if (mode === 'firebase') {
+      const db = firebase.firestore();
+      const ref = db.collection('superTraders').doc('bank');
+      ref.onSnapshot(snap => {
+        if (!snap.exists) { ref.set(fresh()); return; }
+        bankEmit(norm(snap.data()));
+      }, err => setStatus('error', 'Question bank error: ' + err.message));
+      bankBackend = fn => db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const b = snap.exists ? norm(snap.data()) : fresh();
+        const r = fn(b);
+        if (r && r.error) return r;
+        tx.set(ref, b);
+        return r || { ok: true };
+      });
+    } else {
+      const KEY = 'superTraders:bank';
+      const read = () => { try { return norm(JSON.parse(localStorage.getItem(KEY))); } catch (e) { return fresh(); } };
+      bankBackend = fn => new Promise(resolve => {
+        const b = read(); const r = fn(b);
+        if (r && r.error) return resolve(r);
+        localStorage.setItem(KEY, JSON.stringify(b)); bankEmit(b); resolve(r || { ok: true });
+      });
+      window.addEventListener('storage', e => { if (e.key === KEY) bankEmit(read()); });
+      setTimeout(() => bankEmit(read()), 0);
+    }
+  }
+  const bankUpdate = fn => { initBank(); return bankBackend(fn).catch(e => ({ error: e.message || 'Could not save' })); };
+  const askPrice = p => { p = Math.round(Number(p)); return p > 0 ? p : null; };
+
   // ---------- game actions (all rules live here) ----------
   const actions = {
     addTeams(names, points) {
@@ -116,19 +167,44 @@
         if (m.phase !== 'idle' && m.phase !== 'result') return { error: 'Finish the current question first' };
         price = Math.round(Number(price));
         if (!(price > 0)) return { error: 'Enter an opening price above 0' };
-        q = q || {};
-        const type = ['mcq', 'blank', 'statement'].indexOf(q.qType) >= 0 ? q.qType : 'mcq';
-        let options = [], answer = String(q.answer || '').trim();
-        if (type === 'mcq') {
-          options = [0, 1, 2, 3].map(i => String((q.options || [])[i] || '').trim());
-          if (options.filter(Boolean).length < 2) return { error: 'Add at least two options' };
-          if (!/^[A-D]$/.test(answer) || !options['ABCD'.indexOf(answer)]) return { error: 'Pick which option is correct' };
-        }
-        m.qType = type; m.options = options; m.answer = answer;
-        m.qNo += 1; m.phase = 'open'; m.question = q.question || ''; m.price = price;
+        const c = cleanQuestion(q);
+        if (c.error) return c;
+        m.qType = c.qType; m.options = c.options; m.answer = c.answer;
+        m.qNo += 1; m.phase = 'open'; m.question = c.question; m.price = price;
         m.ownerId = null; m.history = [price]; m.result = null; m.rev += 1;
         addLog(s, `Question ${m.qNo}: market opened at ${price}`);
       });
+    },
+    // ----- question bank: save now, release whenever you want -----
+    saveQuestion(q, price) {
+      return bankUpdate(b => {
+        const c = cleanQuestion(q); if (c.error) return c;
+        if (!c.question) return { error: 'Type the question before saving it' };
+        const p = askPrice(price); if (!p) return { error: 'Enter an opening price above 0' };
+        b.items.push(Object.assign({ id: uid(), price: p, savedAt: Date.now(), used: false }, c));
+        return { ok: true };
+      });
+    },
+    updateQuestion(id, q, price) {
+      return bankUpdate(b => {
+        const it = b.items.find(x => x.id === id); if (!it) return { error: 'Saved question not found' };
+        const c = cleanQuestion(q); if (c.error) return c;
+        if (!c.question) return { error: 'Type the question before saving it' };
+        const p = askPrice(price); if (!p) return { error: 'Enter an opening price above 0' };
+        Object.assign(it, c, { price: p });
+        return { ok: true };
+      });
+    },
+    deleteQuestion(id) {
+      return bankUpdate(b => { b.items = b.items.filter(x => x.id !== id); });
+    },
+    async releaseQuestion(id) { // opens the market with a saved question
+      initBank();
+      const item = bankState && bankState.items.find(x => x.id === id);
+      if (!item) return { error: 'Saved question not found' };
+      const r = await actions.openMarket(item, item.price);
+      if (r && r.ok) await bankUpdate(b => { const it = b.items.find(x => x.id === id); if (it) { it.used = true; it.usedAt = Date.now(); } });
+      return r;
     },
     placeBid(teamId, amount) {
       return update(s => {
@@ -258,7 +334,8 @@
     state: () => state,
     subscribe(fn) { listeners.push(fn); if (state) fn(state); },
     onStatus(fn) { statusFns.push(fn); if (lastStatus) fn(lastStatus.kind, lastStatus.msg); },
-    update, actions, secondsLeft
+    update, actions, secondsLeft,
+    subscribeBank(fn) { bankListeners.push(fn); initBank(); if (bankState) fn(bankState); }
   };
   window.UI = { esc, fmt, phaseInfo, rank, chartSVG, typeLabel, answerText, optionsHTML };
 })();

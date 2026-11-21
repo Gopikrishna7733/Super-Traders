@@ -149,3 +149,12 @@ td input { padding: .35rem .5rem; }
 /* fixes: price block must not stretch, empty-state rows must span the full width */
 .row > .price, .row > .team-price { flex: 0 0 auto; }
 .ranks li.empty { display: block; }
+
+/* question bank */
+.bank { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; max-height: 420px; overflow: auto; }
+.bankitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; padding: .7rem .9rem; border-radius: 12px; background: #110a2a; border: 1px solid var(--line); }
+.bankitem.used { opacity: .6; }
+.bankitem .bq { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: .3rem; }
+.bankitem .acts { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; }
+.editing { border-color: var(--gold) !important; }
+@media (max-width: 600px) { .bankitem { grid-template-columns: 1fr; } .bankitem .acts { justify-content: flex-start; } }

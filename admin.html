@@ -60,6 +60,8 @@
         <div class="field" id="textAnsBox" hidden><label for="textAns" id="textAnsLabel">Correct answer</label><input id="textAns"></div>
         <div class="row">
           <div style="flex:0 0 11rem"><label for="p0">Opening price</label><input id="p0" type="number" min="1" step="1"></div>
+          <button class="btn ghost" id="saveQ" type="button" style="align-self:flex-end">Save for later</button>
+          <button class="btn ghost" id="cancelEdit" type="button" style="align-self:flex-end" hidden>Cancel edit</button>
           <button class="btn gold big" id="open" type="button" style="align-self:flex-end;flex:1">Open the market</button>
         </div>
       </div>
@@ -71,6 +73,13 @@
         <button class="btn ghost" id="skip" type="button">Skip question</button>
       </div>
       <p class="msg" id="msg" role="status" aria-live="polite" style="margin-top:.6rem"></p>
+    </section>
+
+    <!-- question bank -->
+    <section class="panel">
+      <h2>Question bank</h2>
+      <p class="muted small" style="margin-bottom:.8rem">Fill in the form above and press "Save for later". Release a saved question whenever you are ready. You can only release when no question is live.</p>
+      <ul class="bank" id="bankList"></ul>
     </section>
 
     <!-- teams -->
@@ -144,11 +153,38 @@ function syncType() {
 }
 document.querySelectorAll('input[name="qtype"]').forEach(r => r.addEventListener('change', syncType));
 syncType();
+const readForm = () => { const t = qType(); return { qType: t, question: $('q').value.trim(), options: ['oA', 'oB', 'oC', 'oD'].map(id => $(id).value), answer: t === 'mcq' ? $('mcqAns').value : $('textAns').value }; };
+const clearForm = () => { ['q', 'oA', 'oB', 'oC', 'oD', 'textAns'].forEach(id => { $(id).value = ''; }); };
+let editingId = null;
+function setEditing(id) {
+  editingId = id;
+  $('saveQ').textContent = id ? 'Update saved question' : 'Save for later';
+  $('cancelEdit').hidden = !id;
+  $('openForm').classList.toggle('editing', !!id);
+  if (!id) { delete $('p0').dataset.touched; }
+}
 $('open').onclick = () => {
-  const t = qType();
-  const q = { qType: t, question: $('q').value.trim(), options: ['oA', 'oB', 'oC', 'oD'].map(id => $(id).value), answer: t === 'mcq' ? $('mcqAns').value : $('textAns').value };
-  run(A.openMarket(q, $('p0').value)).then(r => { if (r && r.ok) { ['q', 'oA', 'oB', 'oC', 'oD', 'textAns'].forEach(id => { $(id).value = ''; }); } });
+  run(A.openMarket(readForm(), $('p0').value)).then(r => { if (r && r.ok) { clearForm(); setEditing(null); } });
 };
+$('saveQ').onclick = async () => {
+  const wasEditing = !!editingId;
+  const r = await run(wasEditing ? A.updateQuestion(editingId, readForm(), $('p0').value) : A.saveQuestion(readForm(), $('p0').value));
+  if (r && r.ok) { clearForm(); setEditing(null); say(wasEditing ? 'Saved question updated.' : 'Question saved to the bank.', true); }
+};
+$('cancelEdit').onclick = () => { clearForm(); setEditing(null); say(''); };
+$('bankList').addEventListener('click', e => {
+  const id = e.target.dataset.id, act = e.target.dataset.act; if (!id) return;
+  if (act === 'release') run(A.releaseQuestion(id));
+  if (act === 'bdel' && confirm('Delete this saved question?')) { if (editingId === id) { clearForm(); setEditing(null); } run(A.deleteQuestion(id)); }
+  if (act === 'bedit') {
+    const it = lastBank && lastBank.items.find(x => x.id === id); if (!it) return;
+    document.querySelector('input[name="qtype"][value="' + it.qType + '"]').checked = true; syncType();
+    $('q').value = it.question; ['A', 'B', 'C', 'D'].forEach((L, i) => { $('o' + L).value = it.options[i] || ''; });
+    if (it.qType === 'mcq') $('mcqAns').value = it.answer; else $('textAns').value = it.answer;
+    $('p0').value = it.price; $('p0').dataset.touched = '1';
+    setEditing(id); $('openForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+});
 $('closeNow').onclick = () => run(A.closeBidding(null));
 $('right').onclick = () => run(A.markResult(true));
 $('wrong').onclick = () => run(A.markResult(false));
@@ -171,8 +207,17 @@ $('teamRows').addEventListener('click', e => {
 });
 
 // ---- render ----
-let teamsKey = '', settingsLoaded = false;
+let teamsKey = '', settingsLoaded = false, lastBank = null, lastState = null;
+function renderBank() {
+  const el = $('bankList'); if (!lastBank) return;
+  const items = lastBank.items, m = lastState && lastState.market;
+  const canRelease = !m || m.phase === 'idle' || m.phase === 'result';
+  if (!items.length) { el.innerHTML = '<li class="muted small">No saved questions yet.</li>'; return; }
+  const order = items.map((it, i) => ({ it, i })).sort((a, b) => (a.it.used - b.it.used) || (a.i - b.i));
+  el.innerHTML = order.map(({ it, i }) => `<li class="bankitem${it.used ? ' used' : ''}"><div><span class="chip">${UI.esc(UI.typeLabel(it.qType))}</span> <span class="muted small">Saved #${i + 1} · opens at ${UI.fmt(it.price)}${it.used ? ' · already released' : ''}</span><div class="bq">${UI.esc(it.question)}</div></div><div class="acts"><button class="btn gold sm" data-act="release" data-id="${UI.esc(it.id)}" type="button"${canRelease ? '' : ' disabled title="Finish the live question first"'}>${it.used ? 'Release again' : 'Release'}</button><button class="btn ghost sm" data-act="bedit" data-id="${UI.esc(it.id)}" type="button"${canRelease ? '' : ' disabled'}>Edit</button><button class="btn ghost sm" data-act="bdel" data-id="${UI.esc(it.id)}" type="button">Delete</button></div></li>`).join('');
+}
 function render(s) {
+  lastState = s; renderBank();
   const m = s.market, st = s.settings, info = UI.phaseInfo(s);
   const pill = $('status'); pill.className = 'pill ' + info.cls; pill.innerHTML = '<span class="dot"></span>' + UI.esc(info.label);
   $('price').textContent = m.phase === 'idle' ? '0' : UI.fmt(m.price);
@@ -230,6 +275,7 @@ function tick() {
 }
 
 Store.subscribe(render);
+Store.subscribeBank(b => { lastBank = b; renderBank(); });
 setInterval(tick, 250);
 </script>
 </body>
